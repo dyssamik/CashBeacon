@@ -6,13 +6,18 @@ using Telegram.Bot.Types.Enums;
 
 namespace CashBeacon;
 
-public class TelegramClient
+public class TelegramClient : IPlatformClient
 {
     private readonly ITelegramBotClient _bot;
 
-    public TelegramClient(string token)
+    public string BotKey { get; }
+
+    public Platform Platform => Platform.Telegram;
+
+    public TelegramClient(string token, string botKey)
     {
         _bot = new TelegramBotClient(token);
+        BotKey = botKey;
     }
 
     public void StartReceiving(
@@ -42,7 +47,6 @@ public class TelegramClient
             await _bot.SetWebhook(url, secretToken: secret, cancellationToken: ct);
         }
     }
-
 
     public Task DeleteWebhookAsync(CancellationToken ct = default)
     => _bot.DeleteWebhook(cancellationToken: ct);

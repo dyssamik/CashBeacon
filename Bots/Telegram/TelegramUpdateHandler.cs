@@ -41,21 +41,21 @@ public class TelegramUpdateHandler : IPlatformUpdateHandler<Update>
 
     private async Task OnMessage(Message message, string text, CancellationToken ct)
     {
-        var chatId = message.Chat.Id;
+        var ctx = new BotContext(message.Chat.Id, Platform.Telegram, _client.BotKey);
 
-        _logger.LogInformation("Received a '{Text}' message from {FromId} in chat {ChatId}", message.Text, message.From?.Id, chatId);
+        _logger.LogInformation("Received a '{Text}' message from {FromId} in chat {ChatId}", message.Text, message.From?.Id, ctx.ChatId);
 
-        var response = await _processor.ProcessAsync(chatId, Platform.Telegram, text, ct);
+        var response = await _processor.ProcessAsync(ctx, text, ct);
 
-        await _client.SendResponseAsync(chatId, response, ct);
+        await _client.SendResponseAsync(ctx.ChatId, response, ct);
     }
 
     private async Task OnCallback(CallbackQuery callback, CancellationToken ct)
     {
-        var chatId = callback.Message!.Chat.Id;
-        var response = await _processor.ProcessCallbackAsync(chatId, Platform.Telegram, callback.Data!, ct);
+        var ctx = new BotContext(callback.Message!.Chat.Id, Platform.Telegram, _client.BotKey);
+        var response = await _processor.ProcessCallbackAsync(ctx, callback.Data!, ct);
 
         await _client.AnswerCallbackAsync(callback.Id, ct: ct);
-        await _client.SendResponseAsync(chatId, response, ct);
+        await _client.SendResponseAsync(ctx.ChatId, response, ct);
     }
 }

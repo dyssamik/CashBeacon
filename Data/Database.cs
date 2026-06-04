@@ -46,7 +46,8 @@ public class Database
                 Id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ChatId INTEGER NOT NULL,
                 Platform INTEGER NOT NULL,
-                UNIQUE(Platform, ChatId)
+                BotKey TEXT NOT NULL,
+                UNIQUE(Platform, ChatId, BotKey)
             );
 
             CREATE TABLE IF NOT EXISTS RestaurantConnections (
@@ -60,6 +61,16 @@ public class Database
                 FOREIGN KEY(RestaurantId) REFERENCES Restaurants(Id),
 
                 UNIQUE(ChatId, RestaurantId)
+            );
+
+            CREATE TABLE IF NOT EXISTS WhiteServerEvents (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                EventGuid TEXT NOT NULL UNIQUE,
+                EventType TEXT NOT NULL,
+                RestaurantId INTEGER NOT NULL,
+                Payload TEXT NOT NULL,
+                ReceivedAt DATETIME NOT NULL,
+                AddedAt DATETIME NOT NULL
             );
         """);
     }
@@ -94,7 +105,7 @@ public class Database
         }
     }
 
-    public async Task<RegistrationResult> RegisterRestaurantAsync(long chatId, Platform platform, int restaurantId, string restaurantName, string token)
+    public async Task<RegistrationResult> RegisterRestaurantAsync(BotContext ctx, int restaurantId, string restaurantName, string token)
     {
         using var connection = await ConnectAsync();
 
@@ -106,7 +117,7 @@ public class Database
             WHERE c.ChatId = @ChatId AND c.Platform = @Platform
               AND r.RestaurantId = @RestaurantId
             """,
-            new { ChatId = chatId, Platform = (int)platform, RestaurantId = restaurantId });
+            new { ChatId = ctx.ChatId, Platform = (int)ctx.Platform, RestaurantId = restaurantId });
 
         var isNew = existingConnection is null;
 
@@ -130,14 +141,15 @@ public class Database
             transaction);
 
             await connection.ExecuteAsync("""
-                INSERT INTO Chats (ChatId, Platform)
-                VALUES (@ChatId, @Platform)
-                ON CONFLICT(Platform, ChatId) DO NOTHING;
+                INSERT INTO Chats (ChatId, Platform, BotKey)
+                VALUES (@ChatId, @Platform, @BotKey)
+                ON CONFLICT(Platform, ChatId, BotKey) DO NOTHING;
             """,
             new
             {
-                ChatId = chatId,
-                Platform = (int)platform
+                ChatId = ctx.ChatId,
+                Platform = (int)ctx.Platform,
+                BotKey = ctx.BotKey
             },
             transaction);
 
@@ -153,8 +165,8 @@ public class Database
             """,
             new
             {
-                ChatId = chatId,
-                Platform = (int)platform,
+                ChatId = ctx.ChatId,
+                Platform = (int)ctx.Platform,
                 RestaurantId = restaurantId,
                 Token = token
             },
@@ -169,13 +181,43 @@ public class Database
 
             _logger.LogError(exception,
                 "Failed to register restaurant {RestaurantId} for chat {ChatId} on platform {Platform}",
-                restaurantId, chatId, platform);
+                restaurantId, ctx.ChatId, ctx.Platform);
 
             return RegistrationResult.Failed;
         }
     }
 
-    public async Task<IEnumerable<Restaurant>> GetRestaurantsAsync(long chatId, Platform platform)
+    public async Task<bool> UnregisterRestaurantAsync(BotContext ctx, int restaurantId)
+    {
+        using var connection = await ConnectAsync();
+        return await connection.ExecuteAsync("""
+            DELETE FROM RestaurantConnections
+            WHERE ChatId = (SELECT Id FROM Chats WHERE ChatId = @ChatId AND Platform = @Platform)
+            AND RestaurantId = (SELECT Id FROM Restaurants WHERE RestaurantId = @RestaurantId)
+        """,
+        new
+        {
+            ChatId = ctx.ChatId,
+            Platform = (int)ctx.Platform,
+            RestaurantId = restaurantId
+        }) > 0;
+    }
+
+    public async Task<IEnumerable<BotContext>> GetChatsByRestaurantAsync(int restaurantId)
+    {
+        using var connection = await ConnectAsync();
+        var rows = await connection.QueryAsync<(long ChatId, int Platform, string BotKey)>("""
+            SELECT c.ChatId, c.Platform, c.BotKey
+            FROM RestaurantConnections rc
+            JOIN Chats c ON rc.ChatId = c.Id
+            JOIN Restaurants r ON rc.RestaurantId = r.Id
+            WHERE r.RestaurantId = @RestaurantId
+        """,
+        new { RestaurantId = restaurantId });
+        return rows.Select(r => new BotContext(r.ChatId, (Platform)r.Platform, r.BotKey));
+    }
+
+    public async Task<IEnumerable<Restaurant>> GetRestaurantsAsync(BotContext ctx)
     {
         using var connection = await ConnectAsync();
         return await connection.QueryAsync<Restaurant>("""
@@ -186,10 +228,10 @@ public class Database
             WHERE c.ChatId = @ChatId AND c.Platform = @Platform
             ORDER BY r.Name
         """,
-        new { ChatId = chatId, Platform = (int)platform } );
+        new { ChatId = ctx.ChatId, Platform = (int)ctx.Platform } );
     }
 
-    public async Task<Restaurant?> GetSelectedRestaurantAsync(long chatId, Platform platform)
+    public async Task<Restaurant?> GetSelectedRestaurantAsync(BotContext ctx)
     {
         using var connection = await ConnectAsync();
         return await connection.QuerySingleOrDefaultAsync<Restaurant>("""
@@ -199,10 +241,10 @@ public class Database
             JOIN Chats c ON rc.ChatId = c.Id
             WHERE c.ChatId = @ChatId AND c.Platform = @Platform AND rc.IsSelected = 1
         """,
-        new { ChatId = chatId, Platform = (int)platform } );
+        new { ChatId = ctx.ChatId, Platform = (int)ctx.Platform } );
     }
 
-    public async Task<Restaurant?> SetSelectedAsync(long chatId, Platform platform, int restaurantId)
+    public async Task<Restaurant?> SelectRestaurantAsync(BotContext ctx, int restaurantId)
     {
         using var connection = await ConnectAsync();
         using var transaction = await connection.BeginTransactionAsync();
@@ -212,14 +254,14 @@ public class Database
                 UPDATE RestaurantConnections SET IsSelected = 0
                 WHERE ChatId = (SELECT Id FROM Chats WHERE ChatId = @ChatId AND Platform = @Platform)
             """,
-            new { ChatId = chatId, Platform = (int)platform }, transaction);
+            new { ChatId = ctx.ChatId, Platform = (int)ctx.Platform }, transaction);
 
             await connection.ExecuteAsync("""
                 UPDATE RestaurantConnections SET IsSelected = 1
                 WHERE ChatId = (SELECT Id FROM Chats WHERE ChatId = @ChatId AND Platform = @Platform)
                     AND RestaurantId = (SELECT Id FROM Restaurants WHERE RestaurantId = @RestaurantId)
             """,
-            new { ChatId = chatId, Platform = (int)platform, RestaurantId = restaurantId }, transaction);
+            new { ChatId = ctx.ChatId, Platform = (int)ctx.Platform, RestaurantId = restaurantId }, transaction);
 
             await transaction.CommitAsync();
         }
@@ -229,27 +271,44 @@ public class Database
 
             _logger.LogError(exception,
                 "Failed to set selected restaurant {RestaurantId} for chat {ChatId} on platform {Platform}",
-				restaurantId, chatId, platform);
+				restaurantId, ctx.ChatId, ctx.Platform);
 
 			return null;
         }
 
-        return await GetSelectedRestaurantAsync(chatId, platform);
+        return await GetSelectedRestaurantAsync(ctx);
     }
 
-    public async Task<bool> UnregisterRestaurantAsync(long chatId, Platform platform, int restaurantId)
+    public async Task<bool> RegisterWhiteServerEventAsync(WhiteServerEvent wsEvent)
     {
         using var connection = await ConnectAsync();
-        return await connection.ExecuteAsync("""
-            DELETE FROM RestaurantConnections
-            WHERE ChatId = (SELECT Id FROM Chats WHERE ChatId = @ChatId AND Platform = @Platform)
-            AND RestaurantId = (SELECT Id FROM Restaurants WHERE RestaurantId = @RestaurantId)
-        """,
-        new
+        try
         {
-            ChatId = chatId,
-            Platform = (int)platform,
-            RestaurantId = restaurantId
-        }) > 0;
+            await connection.ExecuteAsync("""
+                INSERT INTO WhiteServerEvents (EventGuid, EventType, RestaurantId, Payload, ReceivedAt, AddedAt)
+                VALUES (@EventGuid, @EventType, @RestaurantId, @Payload, @ReceivedAt, @AddedAt)
+            """,
+            new
+            {
+                EventGuid = wsEvent.Common.EventGuid,
+                EventType = wsEvent.Common.EventType,
+                RestaurantId = wsEvent.Common.RestaurantId,
+                Payload = wsEvent.Response,
+                ReceivedAt = wsEvent.Common.ReceivedAt,
+                AddedAt = DateTime.UtcNow
+            });
+            return true;
+        }
+        catch (SqliteException exception) when (exception.SqliteErrorCode == 19) // UNIQUE constraint failed
+        {
+            _logger.LogWarning("Duplicate event received with GUID {EventGuid}, ignoring. Exception: {ExceptionMessage}",
+                wsEvent.Common.EventGuid, exception.Message);
+            return false;
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(exception, "Failed to register WS event with GUID {EventGuid}", wsEvent.Common.EventGuid);
+            return false;
+        }
     }
 }

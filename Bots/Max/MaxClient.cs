@@ -2,15 +2,20 @@
 
 namespace CashBeacon;
 
-public class MaxClient
+public class MaxClient : IPlatformClient
 {
     private readonly HttpClient _http = new();
     private readonly string _token;
     private const string BaseUrl = "https://platform-api.max.ru";
 
-    public MaxClient(string token)
+    public string BotKey { get; }
+    public Platform Platform => Platform.Max;
+
+    public MaxClient(string token, string botKey)
     {
         _token = token;
+        BotKey = botKey;
+
         _http.DefaultRequestHeaders.Add("Authorization", _token);
     }
 
@@ -36,7 +41,7 @@ public class MaxClient
         var payload = new
         {
             url = url,
-            update_types = new[] { "message_created", "message_callback" }, // Подписываемся на нужные события
+            update_types = new[] { "message_created", "message_callback" },
             secret = secret
         };
 

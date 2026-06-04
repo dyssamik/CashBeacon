@@ -1,4 +1,6 @@
-﻿using Telegram.Bot.Types;
+﻿using System.Text;
+using System.Text.Json;
+using Telegram.Bot.Types;
 
 namespace CashBeacon
 {
@@ -19,14 +21,21 @@ namespace CashBeacon
                 new Database(dbPath,
                     provider.GetRequiredService<ILogger<Database>>()));
 
-            var whiteServerBaseUrl = builder.Configuration["WhiteServer:BaseUrl"];
-            var whiteServerEnabled = !string.IsNullOrWhiteSpace(whiteServerBaseUrl);
+            var wsBaseUrl = builder.Configuration["WhiteServer:BaseUrl"];
+            var wsEventCallbackUrl = builder.Configuration["WhiteServer:EventCallbackUrl"];
+            var wsEventCallbackSecret = builder.Configuration["WhiteServer:EventCallbackSecret"];
+
+            var whiteServerEnabled = !string.IsNullOrWhiteSpace(wsBaseUrl);
+            var wsEventsEnabled = whiteServerEnabled
+                && !string.IsNullOrWhiteSpace(wsEventCallbackUrl)
+                && !string.IsNullOrWhiteSpace(wsEventCallbackSecret);
 
             if (whiteServerEnabled)
-            {
                 builder.Services.AddSingleton<IWhiteServerFactory>(
-                    _ => new WhiteServerFactory(whiteServerBaseUrl!));
-            }
+                    _ => new WhiteServerFactory(wsBaseUrl!));
+
+            if (wsEventsEnabled)
+                builder.Services.AddSingleton<WhiteServerEventHandler>();
 
             builder.Services.AddSingleton(provider =>
                 new Processor(provider.GetRequiredService<ILogger<Processor>>(),
@@ -35,7 +44,6 @@ namespace CashBeacon
 
             var tgBots = builder.Configuration.GetSection("Telegram:Bots").GetChildren();
             var tgSecretToTokenMap = new Dictionary<string, string>();
-
             foreach (var tgBot in tgBots)
             {
                 var name = tgBot["Name"];
@@ -50,9 +58,10 @@ namespace CashBeacon
                 var webhookSecret = transportSection["WebhookSecret"];
                 var certPath = transportSection.GetSection("Certificate")["Path"];
 
-                string botKey = token;
+                var botKey = token;
 
-                builder.Services.AddKeyedSingleton(botKey, (_, _) => new TelegramClient(token));
+                builder.Services.AddKeyedSingleton<TelegramClient>(botKey, (_, _) => new TelegramClient(token, botKey));
+                builder.Services.AddSingleton<IPlatformClient>(provider => provider.GetRequiredKeyedService<TelegramClient>(botKey));
                 builder.Services.AddKeyedSingleton(botKey, (provider, _) =>
                     new TelegramUpdateHandler(
                         provider.GetRequiredKeyedService<TelegramClient>(botKey),
@@ -107,9 +116,10 @@ namespace CashBeacon
                 var webhookSecret = transportSection["WebhookSecret"];
                 var certPath = transportSection.GetSection("Certificate")["Path"];
 
-                string botKey = token;
+                var botKey = token;
 
-                builder.Services.AddKeyedSingleton(botKey, (_, _) => new MaxClient(token));
+                builder.Services.AddKeyedSingleton<MaxClient>(botKey, (_, _) => new MaxClient(token, botKey));
+                builder.Services.AddSingleton<IPlatformClient>(provider => provider.GetRequiredKeyedService<MaxClient>(botKey));
                 builder.Services.AddKeyedSingleton(botKey, (provider, _) =>
                     new MaxUpdateHandler(
                         provider.GetRequiredKeyedService<MaxClient>(botKey),
@@ -144,6 +154,8 @@ namespace CashBeacon
                     });
                 }
             }
+
+            builder.Services.AddSingleton<IPlatformClientFactory, PlatformClientFactory>();
 
             var app = builder.Build();
 
@@ -180,6 +192,33 @@ namespace CashBeacon
                 if (update is not null) await handler.HandleAsync(update, ct);
                 return Results.Ok();
             });
+
+            if (wsEventsEnabled)
+            {
+                app.MapPost("/webhook/whiteserver", async (HttpContext ctx, WhiteServerEventHandler handler, CancellationToken ct) =>
+                {
+                    var signature = ctx.Request.Headers["Signature"].ToString();
+
+                    ctx.Request.EnableBuffering();
+                    var body = await new StreamReader(ctx.Request.Body).ReadToEndAsync(ct);
+                    ctx.Request.Body.Position = 0;
+
+                    if (!handler.VerifySignature(Encoding.UTF8.GetBytes(body), signature, wsEventCallbackSecret!))
+                    {
+                        logger.LogWarning("Invalid WhiteServer signature");
+                        return Results.Unauthorized();
+                    }
+
+                    var wsEvent = JsonSerializer.Deserialize<WhiteServerEvent>(
+                        body,
+                        new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+                    if (wsEvent is not null)
+                        await handler.HandleAsync(wsEvent, ct);
+
+                    return Results.Ok();
+                });
+            }
 
             if (!whiteServerEnabled)
                 logger.LogWarning("WhiteServer integration disabled: no base URL provided");

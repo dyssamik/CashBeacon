@@ -38,18 +38,22 @@ public class MaxUpdateHandler
 
     private async Task OnMessage(long chatId, string text, CancellationToken ct)
     {
+        var ctx = new BotContext(chatId, Platform.Max, _client.BotKey);
+
         _logger.LogInformation("Received message from {ChatId}: {Text}", chatId, text);
 
-        var response = await _processor.ProcessAsync(chatId, Platform.Max, text, ct);
+        var response = await _processor.ProcessAsync(ctx, text, ct);
 
         await _client.SendResponseAsync(chatId, response, ct);
     }
 
     private async Task OnCallback(long chatId, string payload, CancellationToken ct)
     {
+        var ctx = new BotContext(chatId, Platform.Max, _client.BotKey);
+
         _logger.LogInformation("Received callback from {ChatId}: {Payload}", chatId, payload);
 
-        var response = await _processor.ProcessCallbackAsync(chatId, Platform.Max, payload, ct);
+        var response = await _processor.ProcessCallbackAsync(ctx, payload, ct);
 
         await _client.SendResponseAsync(chatId, response, ct);
     }
