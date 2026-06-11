@@ -17,7 +17,7 @@ public class MaxPollingService : BackgroundService
     {
         long? marker = null;
         var me = await _client.GetMeAsync(ct);
-        _logger.LogInformation("Started MAX polling for \"{Name}\" ({Id})", me.Name, me.UserId) ;
+        _logger.LogInformation("Started polling: \"{Name}\" ({Id})", me.Name, me.UserId) ;
         while (!ct.IsCancellationRequested)
         {
             try

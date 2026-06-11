@@ -1,11 +1,15 @@
-﻿using System.Text;
-using System.Text.Json;
+﻿using System.Text.Json;
 using Telegram.Bot.Types;
 
 namespace CashBeacon
 {
     internal class Program
     {
+        private static readonly JsonSerializerOptions CaseInsensitive = new()
+        {
+            PropertyNameCaseInsensitive = true
+        };
+
         static async Task Main(string[] args)
         {
             SQLitePCL.Batteries.Init();
@@ -22,20 +26,14 @@ namespace CashBeacon
                     provider.GetRequiredService<ILogger<Database>>()));
 
             var wsBaseUrl = builder.Configuration["WhiteServer:BaseUrl"];
-            var wsEventCallbackUrl = builder.Configuration["WhiteServer:EventCallbackUrl"];
-            var wsEventCallbackSecret = builder.Configuration["WhiteServer:EventCallbackSecret"];
 
             var whiteServerEnabled = !string.IsNullOrWhiteSpace(wsBaseUrl);
-            var wsEventsEnabled = whiteServerEnabled
-                && !string.IsNullOrWhiteSpace(wsEventCallbackUrl)
-                && !string.IsNullOrWhiteSpace(wsEventCallbackSecret);
 
             if (whiteServerEnabled)
-                builder.Services.AddSingleton<IWhiteServerFactory>(
-                    _ => new WhiteServerFactory(wsBaseUrl!));
-
-            if (wsEventsEnabled)
+            {
+                builder.Services.AddSingleton<IWhiteServerFactory>(_ => new WhiteServerFactory(wsBaseUrl!));
                 builder.Services.AddSingleton<WhiteServerEventHandler>();
+            }
 
             builder.Services.AddSingleton(provider =>
                 new Processor(provider.GetRequiredService<ILogger<Processor>>(),
@@ -161,7 +159,7 @@ namespace CashBeacon
 
             var logger = app.Services.GetRequiredService<ILogger<Program>>();
 
-            if (tgBots.Count() == 0)
+            if (!tgBots.Any())
                 logger.LogWarning("Telegram listener disabled: no bot tokens provided");
 
             app.MapPost("/webhook/telegram", async (HttpContext ctx, CancellationToken ct) =>
@@ -177,7 +175,7 @@ namespace CashBeacon
                 return Results.Ok();
             });
 
-            if (maxBots.Count() == 0)
+            if (!maxBots.Any())
                 logger.LogWarning("Max listener disabled: no bot tokens provided");
 
             app.MapPost("/webhook/max", async (HttpContext ctx, CancellationToken ct) =>
@@ -193,17 +191,18 @@ namespace CashBeacon
                 return Results.Ok();
             });
 
-            if (wsEventsEnabled)
+            if (whiteServerEnabled)
             {
                 app.MapPost("/webhook/whiteserver", async (HttpContext ctx, WhiteServerEventHandler handler, CancellationToken ct) =>
                 {
                     var signature = ctx.Request.Headers["Signature"].ToString();
 
                     ctx.Request.EnableBuffering();
-                    var body = await new StreamReader(ctx.Request.Body).ReadToEndAsync(ct);
+                    using var reader = new StreamReader(ctx.Request.Body, leaveOpen: true);
+                    var body = await reader.ReadToEndAsync(ct);
                     ctx.Request.Body.Position = 0;
 
-                    if (!handler.VerifySignature(Encoding.UTF8.GetBytes(body), signature, wsEventCallbackSecret!))
+                    if (!handler.VerifySignature(body, signature))
                     {
                         logger.LogWarning("Invalid WhiteServer signature");
                         return Results.Unauthorized();
@@ -211,7 +210,7 @@ namespace CashBeacon
 
                     var wsEvent = JsonSerializer.Deserialize<WhiteServerEvent>(
                         body,
-                        new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                        CaseInsensitive);
 
                     if (wsEvent is not null)
                         await handler.HandleAsync(wsEvent, ct);

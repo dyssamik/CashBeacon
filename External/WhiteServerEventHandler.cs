@@ -1,30 +1,25 @@
 ﻿using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using Microsoft.Extensions.Logging;
 
 namespace CashBeacon;
 
-public class WhiteServerEventHandler
+public class WhiteServerEventHandler(Database db, ILogger<WhiteServerEventHandler> logger, IPlatformClientFactory factory)
 {
-    public readonly Database _db;
-    public readonly ILogger<WhiteServerEventHandler> _logger;
+    private const string WsSalt = "19eb62c0-42bb-413c-8e14-298ca54fdb6d";
 
-    private readonly IPlatformClientFactory _factory;
+    private static readonly JsonSerializerOptions IndentedOptions = new() { WriteIndented = true };
 
-    public WhiteServerEventHandler(Database db, ILogger<WhiteServerEventHandler> logger, IPlatformClientFactory factory)
-    {
-        _db = db;
-        _logger = logger;
-        _factory = factory;
-    }
+    private readonly Database _db = db;
+    private readonly ILogger<WhiteServerEventHandler> _logger = logger;
+    private readonly IPlatformClientFactory _factory = factory;
 
-    public bool VerifySignature(byte[] body, string signature, string secret)
+    public bool VerifySignature(string body, string signature)
     {
         try
         {
-            using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
-            var hash = hmac.ComputeHash(body);
+            var bytes = Encoding.UTF8.GetBytes(body + WsSalt);
+            var hash = SHA256.HashData(bytes);
             var received = Convert.FromBase64String(signature);
 
             return CryptographicOperations.FixedTimeEquals(hash, received);
@@ -37,8 +32,17 @@ public class WhiteServerEventHandler
 
     public async Task HandleAsync(WhiteServerEvent wsEvent, CancellationToken ct = default)
     {
+        var isNew = await _db.RegisterWhiteServerEventAsync(wsEvent);
+
+        if (!isNew)
+        {
+            _logger.LogInformation("Duplicate WS event: {Json}",
+                JsonSerializer.Serialize(wsEvent, IndentedOptions));
+            return;
+        }
+
         _logger.LogInformation("Received WS event: {Json}",
-            JsonSerializer.Serialize(wsEvent, new JsonSerializerOptions { WriteIndented = true }));
+            JsonSerializer.Serialize(wsEvent, IndentedOptions));
 
         var chats = await _db.GetChatsByRestaurantAsync(wsEvent.Common.RestaurantId);
 
@@ -46,11 +50,15 @@ public class WhiteServerEventHandler
         {
             var client = _factory.GetClient(chat.Platform, chat.BotKey);
 
-            if (client != null)
+            if (client is null)
             {
-                var response = new BotResponse($"📢 Событие от ресторана {wsEvent.Common.RestaurantId}:\n{wsEvent.Common.EventType}");
-                await client.SendResponseAsync(chat.ChatId, response, ct);
+                _logger.LogWarning("No client for platform {Platform} botKey {BotKey}",
+                    chat.Platform, chat.BotKey);
+                continue;
             }
+
+            var response = new BotResponse($"📢 Событие от ресторана {wsEvent.Common.RestaurantId}:\n{wsEvent.Common.EventType}");
+            await client.SendResponseAsync(chat.ChatId, response, ct);
         }
     }
 }

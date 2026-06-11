@@ -40,7 +40,7 @@ public class MaxUpdateHandler
     {
         var ctx = new BotContext(chatId, Platform.Max, _client.BotKey);
 
-        _logger.LogInformation("Received message from {ChatId}: {Text}", chatId, text);
+        _logger.LogInformation("Received a {Text} message from {FromId} in chat {ChatId}", text, chatId, chatId);
 
         var response = await _processor.ProcessAsync(ctx, text, ct);
 

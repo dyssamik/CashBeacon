@@ -28,7 +28,7 @@ public class TelegramPollingService : IHostedService
             updateHandler: (update, ct) => _handler.HandleAsync(update, ct),
             errorHandler: (ex, ct) =>
             {
-                _logger.LogError(ex, "Error in Telegram polling");
+                _logger.LogError(ex, "Error while polling Telegram updates");
                 return Task.CompletedTask;
             },
             options: new ReceiverOptions

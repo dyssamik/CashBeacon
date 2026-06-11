@@ -1,6 +1,7 @@
 ﻿using Dapper;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
+using System.Text.Json;
 
 namespace CashBeacon;
 
@@ -34,12 +35,10 @@ public class Database
 
         await connection.ExecuteAsync("""
             CREATE TABLE IF NOT EXISTS Restaurants (
-                Id INTEGER PRIMARY KEY AUTOINCREMENT,
-                RestaurantId INTEGER NOT NULL,
+                RestaurantId INTEGER PRIMARY KEY,
                 Name TEXT NOT NULL,
                 AddedAt DATETIME NOT NULL,
-                ActiveUntil DATETIME NOT NULL,
-                UNIQUE(RestaurantId)
+                ActiveUntil DATETIME NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS Chats (
@@ -58,19 +57,23 @@ public class Database
                 IsSelected INTEGER NOT NULL DEFAULT 0,
 
                 FOREIGN KEY(ChatId) REFERENCES Chats(Id),
-                FOREIGN KEY(RestaurantId) REFERENCES Restaurants(Id),
+                FOREIGN KEY(RestaurantId) REFERENCES Restaurants(RestaurantId),
 
                 UNIQUE(ChatId, RestaurantId)
             );
 
             CREATE TABLE IF NOT EXISTS WhiteServerEvents (
-                Id INTEGER PRIMARY KEY AUTOINCREMENT,
-                EventGuid TEXT NOT NULL UNIQUE,
+                EventGuid TEXT PRIMARY KEY,
                 EventType TEXT NOT NULL,
+                EventState INTEGER NOT NULL,
                 RestaurantId INTEGER NOT NULL,
                 Payload TEXT NOT NULL,
+                Error TEXT,
                 ReceivedAt DATETIME NOT NULL,
-                AddedAt DATETIME NOT NULL
+                AddedAt DATETIME NOT NULL,
+                ProcessedAt DATETIME
+
+                FOREIGN KEY(RestaurantId) REFERENCES Restaurants(RestaurantId)
             );
         """);
     }
@@ -113,11 +116,11 @@ public class Database
             SELECT rc.Id
             FROM RestaurantConnections rc
             JOIN Chats c ON rc.ChatId = c.Id
-            JOIN Restaurants r ON rc.RestaurantId = r.Id
-            WHERE c.ChatId = @ChatId AND c.Platform = @Platform
+            JOIN Restaurants r ON rc.RestaurantId = r.RestaurantId
+            WHERE c.ChatId = @ChatId AND c.Platform = @Platform AND c.BotKey = @BotKey
               AND r.RestaurantId = @RestaurantId
             """,
-            new { ChatId = ctx.ChatId, Platform = (int)ctx.Platform, RestaurantId = restaurantId });
+            new { ChatId = ctx.ChatId, Platform = (int)ctx.Platform, BotKey = ctx.BotKey, RestaurantId = restaurantId });
 
         var isNew = existingConnection is null;
 
@@ -192,13 +195,14 @@ public class Database
         using var connection = await ConnectAsync();
         return await connection.ExecuteAsync("""
             DELETE FROM RestaurantConnections
-            WHERE ChatId = (SELECT Id FROM Chats WHERE ChatId = @ChatId AND Platform = @Platform)
+            WHERE ChatId = (SELECT Id FROM Chats WHERE ChatId = @ChatId AND Platform = @Platform AND BotKey = @BotKey)
             AND RestaurantId = (SELECT Id FROM Restaurants WHERE RestaurantId = @RestaurantId)
         """,
         new
         {
             ChatId = ctx.ChatId,
             Platform = (int)ctx.Platform,
+            BotKey = ctx.BotKey,
             RestaurantId = restaurantId
         }) > 0;
     }
@@ -210,7 +214,7 @@ public class Database
             SELECT c.ChatId, c.Platform, c.BotKey
             FROM RestaurantConnections rc
             JOIN Chats c ON rc.ChatId = c.Id
-            JOIN Restaurants r ON rc.RestaurantId = r.Id
+            JOIN Restaurants r ON rc.RestaurantId = r.RestaurantId
             WHERE r.RestaurantId = @RestaurantId
         """,
         new { RestaurantId = restaurantId });
@@ -223,7 +227,7 @@ public class Database
         return await connection.QueryAsync<Restaurant>("""
             SELECT r.*, rc.Token, rc.IsSelected
             FROM RestaurantConnections rc
-            JOIN Restaurants r ON rc.RestaurantId = r.Id
+            JOIN Restaurants r ON rc.RestaurantId = r.RestaurantId
             JOIN Chats c ON rc.ChatId = c.Id
             WHERE c.ChatId = @ChatId AND c.Platform = @Platform
             ORDER BY r.Name
@@ -237,7 +241,7 @@ public class Database
         return await connection.QuerySingleOrDefaultAsync<Restaurant>("""
             SELECT r.RestaurantId, r.Name, r.AddedAt, r.ActiveUntil, rc.Token, rc.IsSelected
             FROM RestaurantConnections rc
-            JOIN Restaurants r ON rc.RestaurantId = r.Id
+            JOIN Restaurants r ON rc.RestaurantId = r.RestaurantId
             JOIN Chats c ON rc.ChatId = c.Id
             WHERE c.ChatId = @ChatId AND c.Platform = @Platform AND rc.IsSelected = 1
         """,
@@ -258,10 +262,10 @@ public class Database
 
             await connection.ExecuteAsync("""
                 UPDATE RestaurantConnections SET IsSelected = 1
-                WHERE ChatId = (SELECT Id FROM Chats WHERE ChatId = @ChatId AND Platform = @Platform)
+                WHERE ChatId = (SELECT Id FROM Chats WHERE ChatId = @ChatId AND Platform = @Platform AND BotKey = @BotKey)
                     AND RestaurantId = (SELECT Id FROM Restaurants WHERE RestaurantId = @RestaurantId)
             """,
-            new { ChatId = ctx.ChatId, Platform = (int)ctx.Platform, RestaurantId = restaurantId }, transaction);
+            new { ChatId = ctx.ChatId, Platform = (int)ctx.Platform, BotKey = ctx.BotKey, RestaurantId = restaurantId }, transaction);
 
             await transaction.CommitAsync();
         }
@@ -285,15 +289,16 @@ public class Database
         try
         {
             await connection.ExecuteAsync("""
-                INSERT INTO WhiteServerEvents (EventGuid, EventType, RestaurantId, Payload, ReceivedAt, AddedAt)
-                VALUES (@EventGuid, @EventType, @RestaurantId, @Payload, @ReceivedAt, @AddedAt)
+                INSERT INTO WhiteServerEvents (EventGuid, EventType, EventState, RestaurantId, Payload, ReceivedAt, AddedAt)
+                VALUES (@EventGuid, @EventType, @EventState, @RestaurantId, @Payload, @ReceivedAt, @AddedAt)
             """,
             new
             {
                 EventGuid = wsEvent.Common.EventGuid,
                 EventType = wsEvent.Common.EventType,
+                EventState = WhiteServerEventState.Processing,
                 RestaurantId = wsEvent.Common.RestaurantId,
-                Payload = wsEvent.Response,
+                Payload = JsonSerializer.Serialize(wsEvent.Response),
                 ReceivedAt = wsEvent.Common.ReceivedAt,
                 AddedAt = DateTime.UtcNow
             });

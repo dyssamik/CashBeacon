@@ -1,23 +1,15 @@
-﻿using System.Net.Http.Json;
-using System.Text;
+﻿using System.Text;
 using System.Text.Json;
 
 namespace CashBeacon;
 
-public class WhiteServerClient
+public class WhiteServerClient(string token, int restaurantId, string baseUrl)
 {
     private static readonly HttpClient _http = new();
 
-    private readonly string _token;
-    private readonly int _restaurantId;
-    private readonly string _baseUrl;
-
-    public WhiteServerClient(string token, int restaurantId, string baseUrl)
-    {
-        _token = token;
-        _restaurantId = restaurantId;
-        _baseUrl = baseUrl.TrimEnd('/');
-    }
+    private readonly string _token = token;
+    private readonly int _restaurantId = restaurantId;
+    private readonly string _baseUrl = baseUrl.TrimEnd('/');
 
     private async Task<JsonElement?> SendAsync(object body, CancellationToken cancellationToken = default)
     {
@@ -99,12 +91,8 @@ public class WhiteServerClient
             }
         };
 
-        var response = await SendAsync(payload, cancellationToken);
-
-        if (response is null)
-            throw new InvalidOperationException("Failed to execute RK7 query.");
-
-        var base64Response = response.Value.GetProperty("taskResponse").GetProperty("base64").GetString()!;
+        var response = await SendAsync(payload, cancellationToken) ?? throw new InvalidOperationException("Failed to execute RK7 query.");
+        var base64Response = response.GetProperty("taskResponse").GetProperty("base64").GetString()!;
 
         if (string.IsNullOrEmpty(base64Response))
             throw new InvalidOperationException("RK7 query returned empty response.");
