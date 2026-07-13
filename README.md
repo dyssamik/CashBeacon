@@ -1,37 +1,47 @@
-# CashBeacon
+## 🇷🇺 О проекте
 
-**CashBeacon** — бот для Telegram и Max, который через WhiteServer показывает данные из RK7 (отчёты, события заказов и другое).
+CashBeacon помогает управляющему персоналу ресторанов получать данные из R-Keeper прямо в мессенджере.
 
-[![.NET](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+Возможности:
 
----
+- получение отчётов RK7 по команде;
+- уведомления о событиях заказов в реальном времени;
+- мониторинг нескольких ресторанов;
+- поддержка нескольких ботов в одном экземпляре приложения;
+- хранение истории событий для последующего анализа.
 
-## 🚀 Возможности
+В разработке:
 
-- Telegram + Max (единый код, расширяется добавлением модулей)
-- Получение отчётов — команда `/report <код>` для получения отчёта из RK7
-- События заказов в реальном времени (подписка на события от WhiteServer)
-- Несколько ботов в одном запущенном экземпляре
-
----
-
-## 🏗️ Структура
-
-```text
-CashBeacon/
-├── Bots/          # Клиенты для мессенджеров
-├── Core/          # Бизнес-логика
-├── Data/          # БД
-├── External/      # WhiteServer
-└── Program.cs     # Точка входа
-```
+- аналитика заказов;
+- контроль скидок и удалений блюд;
+- мониторинг открытых столов;
+- статистика по сменам;
+- уведомления о подозрительных действиях персонала.
 
 ---
 
-## ⚡ Быстрый старт
+## 🇬🇧 About
 
-```bash
-git clone https://github.com/yourusername/CashBeacon.git
-cd CashBeacon
-dotnet restore
+CashBeacon is a messenger apps bot for **R-Keeper 7 (RK7)** that works through the **WhiteServer API**.
+
+Features:
+
+- RK7 reports on demand;
+- real-time order event notifications;
+- multiple restaurants support;
+- multiple Telegram and MAX bots in a single application;
+- event history storage for analytics.
+
+Planned:
+
+- order analytics;
+- discount and void monitoring;
+- live table monitoring;
+- shift statistics;
+- suspicious activity alerts.
+
+---
+
+### Keywords
+
+R-Keeper, RKeeper, RK7, RK, rkeeper, r-keeper, r_keeper, WhiteServer, White Server, Telegram Bot, MAX Bot, restaurant automation, POS, restaurant management, ресторан, автоматизация ресторана.
