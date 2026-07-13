@@ -71,7 +71,7 @@ public class Database
                 Error TEXT,
                 ReceivedAt DATETIME NOT NULL,
                 AddedAt DATETIME NOT NULL,
-                ProcessedAt DATETIME
+                ProcessedAt DATETIME,
 
                 FOREIGN KEY(RestaurantId) REFERENCES Restaurants(RestaurantId)
             );

@@ -37,8 +37,6 @@ public class TelegramPollingService : IHostedService
                 DropPendingUpdates = true
             },
             ct: _cts.Token);
-
-        
     }
 
     public Task StopAsync(CancellationToken cancellationToken)
