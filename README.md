@@ -1,3 +1,12 @@
+# CashBeacon
+
+**CashBeacon** — бот для мессенджеров, который интегрируется с **R-Keeper 7 (RK7)** через **WhiteServer API**.
+
+[![.NET](https://img.shields.io/badge/.NET-10.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
+---
+
 ## 🇷🇺 О проекте
 
 CashBeacon помогает управляющему персоналу ресторанов получать данные из R-Keeper прямо в мессенджере.
